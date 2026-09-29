@@ -59,7 +59,10 @@ jobs:
           if [ "$("$RUNNER_TEMP/venv/bin/python" -c 'import platform; print(platform.machine())')" = "$WANT" ]; then
             PY="$RUNNER_TEMP/venv/bin/python"
           else
-            echo "(the clean environment doesn't keep Intel mode - using the Intel launcher directly)"
+            # The shared Python may already hold Apple Silicon copies of some
+            # packages - reinstall everything fresh for this chip.
+            echo "(the clean environment doesn't keep Intel mode - using the Intel launcher, fresh packages)"
+            echo "PIP_IGNORE_INSTALLED=1" >> "$GITHUB_ENV"
           fi
           echo "building with: $PY ($("$PY" -c 'import platform; print(platform.machine())'))"
           echo "PY=$PY" >> "$GITHUB_ENV"
