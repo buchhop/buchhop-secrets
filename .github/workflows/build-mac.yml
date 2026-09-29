@@ -29,8 +29,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [arm64, x64]   # Apple Silicon, Intel (built under Rosetta)
-    runs-on: macos-latest
+        include:
+          - arch: arm64
+            os: macos-latest      # an Apple Silicon Mac
+          - arch: x64
+            os: macos-15-intel    # an Intel Mac
+    runs-on: ${{ matrix.os }}
     env:
       WANT: ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}
       BUCHHOP_TARGET_ARCH: ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}
@@ -40,18 +44,17 @@ jobs:
           python-version: "3.13"
           architecture: ${{ matrix.arch }}
 
-      # GitHub's Mac machines are Apple Silicon: the Intel app is built with
-      # python.org's universal Python in Intel mode under Rosetta. Plain
-      # "arch -x86_64 python" still starts its Apple Silicon side - it ships a
-      # separate Intel-mode launcher for this. A clean environment keeps
-      # anything built for the other chip out.
+      # Each app is built on a Mac with that chip. (If the Intel app ever has
+      # to be built on an Apple Silicon Mac: python.org's universal Python has
+      # an Intel-mode launcher for Rosetta - plain "arch -x86_64 python" still
+      # starts its Apple Silicon side.) A clean environment keeps anything
+      # built for the other chip out.
       - name: Python for this chip
         run: |
-          if [ "$WANT" = "x86_64" ]; then
+          PY="$(python -c 'import sys; print(sys.executable)')"
+          if [ "$("$PY" -c 'import platform; print(platform.machine())')" != "$WANT" ] && [ "$WANT" = "x86_64" ]; then
             /usr/sbin/softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true
             PY="$(python -c 'import os, sys; print(os.path.join(sys.base_prefix, "bin", "python%d.%d-intel64" % sys.version_info[:2]))')"
-          else
-            PY="$(python -c 'import sys; print(sys.executable)')"
           fi
           echo "base Python: $PY"
           test "$("$PY" -c 'import platform; print(platform.machine())')" = "$WANT"
