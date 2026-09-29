@@ -32,9 +32,6 @@ jobs:
         arch: [arm64, x64]   # Apple Silicon, Intel (built under Rosetta)
     runs-on: macos-latest
     env:
-      # GitHub's Mac machines are Apple Silicon: the Intel app is built with
-      # the same (universal) Python run in Intel mode under Rosetta.
-      PY: ${{ matrix.arch == 'x64' && 'arch -x86_64 python' || 'python' }}
       WANT: ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}
       BUCHHOP_TARGET_ARCH: ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}
     steps:
@@ -42,6 +39,20 @@ jobs:
         with:
           python-version: "3.13"
           architecture: ${{ matrix.arch }}
+
+      # GitHub's Mac machines are Apple Silicon: the Intel app is built with
+      # the (universal) Python run in Intel mode under Rosetta, in its own
+      # clean environment so nothing built for the other chip can mix in.
+      - name: Python for this chip
+        run: |
+          if [ "$WANT" = "x86_64" ]; then
+            /usr/sbin/softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true
+            A="arch -x86_64"
+          else
+            A=""
+          fi
+          $A python -m venv "$RUNNER_TEMP/venv"
+          echo "PY=$A $RUNNER_TEMP/venv/bin/python" >> "$GITHUB_ENV"
 
       - name: Unlock the source
         env:
@@ -65,7 +76,6 @@ jobs:
       - name: Install
         working-directory: app
         run: |
-          if [ "$WANT" = "x86_64" ]; then /usr/sbin/softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true; fi
           $PY -c "import platform, sys; print('building for', platform.machine(), sys.version.split()[0])"
           test "$($PY -c 'import platform; print(platform.machine())')" = "$WANT"
           $PY -m pip install --quiet --upgrade pip
