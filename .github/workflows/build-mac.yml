@@ -1,0 +1,77 @@
+name: Build Mac apps
+
+# Started by server/publish_update.py for each release. The app's source is
+# kept encrypted (source.enc on a draft release that's never public); only
+# this build can unlock it, with the SOURCE_KEY secret. The finished apps are
+# attached to the release as buchhop-secrets-macos-arm64.zip and
+# buchhop-secrets-macos-x64.zip - publish_update.py then signs them so the
+# Mac apps' updater will install them.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release to attach the Mac apps to (e.g. build-1790697021)"
+        required: true
+      source:
+        description: "Draft release holding source.enc"
+        required: true
+        default: "mac-build-source"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-mac
+  cancel-in-progress: false
+
+jobs:
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]   # Apple Silicon, Intel (built under Rosetta)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: ${{ matrix.arch }}
+
+      - name: Unlock the source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_KEY: ${{ secrets.SOURCE_KEY }}
+        run: |
+          python -m pip install --quiet cryptography
+          gh release download "${{ inputs.source }}" -R "${{ github.repository }}" -p source.enc -D .
+          python - <<'EOF'
+          import base64, io, os, tarfile
+          from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+          blob = open("source.enc", "rb").read()
+          assert blob[:6] == b"BSSRC1", "not a Buchhop Secrets source file"
+          key = base64.b64decode(os.environ["SOURCE_KEY"])
+          data = AESGCM(key).decrypt(blob[6:18], blob[18:], b"buchhop-src")
+          tarfile.open(fileobj=io.BytesIO(data), mode="r:gz").extractall("app", filter="data")
+          print("source unlocked")
+          EOF
+          rm -f source.enc
+
+      - name: Install
+        working-directory: app
+        run: |
+          python -c "import platform, sys; print('building for', platform.machine(), sys.version.split()[0])"
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet -r requirements.txt pyinstaller pillow
+
+      - name: Build
+        working-directory: app
+        run: python build.py --keep-stamp
+
+      - name: Zip and attach to the release
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          codesign --force --deep --sign - "dist/Buchhop Secrets.app"
+          ditto -c -k --sequesterRsrc --keepParent "dist/Buchhop Secrets.app" "buchhop-secrets-macos-${{ matrix.arch }}.zip"
+          gh release upload "${{ inputs.tag }}" "buchhop-secrets-macos-${{ matrix.arch }}.zip" --clobber -R "${{ github.repository }}"
