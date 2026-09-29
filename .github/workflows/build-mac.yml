@@ -41,18 +41,28 @@ jobs:
           architecture: ${{ matrix.arch }}
 
       # GitHub's Mac machines are Apple Silicon: the Intel app is built with
-      # the (universal) Python run in Intel mode under Rosetta, in its own
-      # clean environment so nothing built for the other chip can mix in.
+      # python.org's universal Python in Intel mode under Rosetta. Plain
+      # "arch -x86_64 python" still starts its Apple Silicon side - it ships a
+      # separate Intel-mode launcher for this. A clean environment keeps
+      # anything built for the other chip out.
       - name: Python for this chip
         run: |
           if [ "$WANT" = "x86_64" ]; then
             /usr/sbin/softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true
-            A="arch -x86_64"
+            PY="$(python -c 'import os, sys; print(os.path.join(sys.base_prefix, "bin", "python%d.%d-intel64" % sys.version_info[:2]))')"
           else
-            A=""
+            PY="$(python -c 'import sys; print(sys.executable)')"
           fi
-          $A python -m venv "$RUNNER_TEMP/venv"
-          echo "PY=$A $RUNNER_TEMP/venv/bin/python" >> "$GITHUB_ENV"
+          echo "base Python: $PY"
+          test "$("$PY" -c 'import platform; print(platform.machine())')" = "$WANT"
+          "$PY" -m venv "$RUNNER_TEMP/venv"
+          if [ "$("$RUNNER_TEMP/venv/bin/python" -c 'import platform; print(platform.machine())')" = "$WANT" ]; then
+            PY="$RUNNER_TEMP/venv/bin/python"
+          else
+            echo "(the clean environment doesn't keep Intel mode - using the Intel launcher directly)"
+          fi
+          echo "building with: $PY ($("$PY" -c 'import platform; print(platform.machine())'))"
+          echo "PY=$PY" >> "$GITHUB_ENV"
 
       - name: Unlock the source
         env:
