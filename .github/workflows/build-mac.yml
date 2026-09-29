@@ -31,6 +31,12 @@ jobs:
       matrix:
         arch: [arm64, x64]   # Apple Silicon, Intel (built under Rosetta)
     runs-on: macos-latest
+    env:
+      # GitHub's Mac machines are Apple Silicon: the Intel app is built with
+      # the same (universal) Python run in Intel mode under Rosetta.
+      PY: ${{ matrix.arch == 'x64' && 'arch -x86_64 python' || 'python' }}
+      WANT: ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}
+      BUCHHOP_TARGET_ARCH: ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}
     steps:
       - uses: actions/setup-python@v5
         with:
@@ -42,9 +48,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_KEY: ${{ secrets.SOURCE_KEY }}
         run: |
-          python -m pip install --quiet cryptography
+          $PY -m pip install --quiet cryptography
           gh release download "${{ inputs.source }}" -R "${{ github.repository }}" -p source.enc -D .
-          python - <<'EOF'
+          $PY - <<'EOF'
           import base64, io, os, tarfile
           from cryptography.hazmat.primitives.ciphers.aead import AESGCM
           blob = open("source.enc", "rb").read()
@@ -59,19 +65,24 @@ jobs:
       - name: Install
         working-directory: app
         run: |
-          python -c "import platform, sys; print('building for', platform.machine(), sys.version.split()[0])"
-          python -m pip install --quiet --upgrade pip
-          python -m pip install --quiet -r requirements.txt pyinstaller pillow
+          if [ "$WANT" = "x86_64" ]; then /usr/sbin/softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true; fi
+          $PY -c "import platform, sys; print('building for', platform.machine(), sys.version.split()[0])"
+          test "$($PY -c 'import platform; print(platform.machine())')" = "$WANT"
+          $PY -m pip install --quiet --upgrade pip
+          $PY -m pip install --quiet -r requirements.txt pyinstaller pillow
 
       - name: Build
         working-directory: app
-        run: python build.py --keep-stamp
+        run: $PY build.py --keep-stamp
 
       - name: Zip and attach to the release
         working-directory: app
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          got="$(lipo -archs "dist/Buchhop Secrets.app/Contents/MacOS/Buchhop Secrets")"
+          echo "app binary is: $got (want $WANT)"
+          test "$got" = "$WANT"
           codesign --force --deep --sign - "dist/Buchhop Secrets.app"
           ditto -c -k --sequesterRsrc --keepParent "dist/Buchhop Secrets.app" "buchhop-secrets-macos-${{ matrix.arch }}.zip"
           gh release upload "${{ inputs.tag }}" "buchhop-secrets-macos-${{ matrix.arch }}.zip" --clobber -R "${{ github.repository }}"
