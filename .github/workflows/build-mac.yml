@@ -31,7 +31,7 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            os: macos-latest      # an Apple Silicon Mac
+            os: macos-15          # an Apple Silicon Mac (pinned: macos-latest sat unassigned on 2026-10-08)
           - arch: x64
             os: macos-15-intel    # an Intel Mac
     runs-on: ${{ matrix.os }}
